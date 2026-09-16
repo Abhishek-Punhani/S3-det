@@ -1,0 +1,80 @@
+# ==============================================================================
+# S3-Det Generic Configuration File
+# UAV Drone Object Detection (drone / no_drone)
+# Paper: "Efficient UAV object detection using spectro-spatial synergistic learning
+#         and implicit recursive refinement" (Scientific Reports 2024)
+# ==============================================================================
+
+# --- Dataset Paths & Classes ---
+# Expected structure:
+#   <data_root>/
+#     train/
+#       drone/     (images + YOLO txt labels, class 0 = drone)
+#       no_drone/  (images as background negatives, no objects)
+#     test/
+#       drone/
+#       no_drone/
+data_root: "/home/manav/dev_ws/s3det/dataset"
+train_split: "train"
+test_split: "test"
+class_names:
+  - "drone"
+
+# --- Output & Logging Paths ---
+checkpoint_dir: "checkpoints"
+plot_dir: "plots"
+log_dir: "logs"
+
+# --- Model & Input ---
+input_size: 640
+num_classes: 1
+
+# --- Backbone (S3Net) ---
+stem_channels: 32
+stage_channels: [64, 128, 256]
+stage_blocks: [2, 2, 2]
+ssb_expansion: 4
+sfg_reduction: 8
+
+# --- Neck (IRFA) ---
+neck_channels: 96
+strides: [4, 8, 16]
+regress_ranges:
+  - [0, 64]
+  - [64, 128]
+  - [128, 100000000.0]
+center_sampling_radius: 2.5
+
+# --- Head (LCR-Head) ---
+reg_max: 16
+stacked_convs: 2
+
+# --- Loss Function Configuration ---
+# Options:
+#   - "nwd":  Normalized Wasserstein Distance (optimal for tiny UAV targets)
+#   - "siou": SCYLLA-IoU with angle/distance/shape cost (source paper exact)
+loss_type: "nwd"
+qfl_beta: 2.0
+nwd_constant: 12.8
+loss_weights:
+  qfl: 1.0
+  dfl: 0.25
+  nwd: 2.0
+  siou: 2.0
+
+# --- Training Hyperparameters (Paper Exact) ---
+lr: 0.001
+weight_decay: 0.05
+epochs: 100
+batch_size: 16
+warmup_iters: 500
+min_lr: 0.00005
+save_every_epoch: true
+eval_every_epoch: true
+workers: 4
+device: "cuda"
+
+# --- Inference / Evaluation ---
+score_thresh: 0.3
+nms_iou: 0.6
+max_dets: 100
