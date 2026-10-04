@@ -140,6 +140,7 @@ def main():
     parser.add_argument("--img-size", type=int, default=None)
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--backbone", default=None, help="Backbone model (e.g., s3net, resnet18, efficientnet_b0)")
     parser.add_argument("--out", default=None, help="Checkpoints directory")
     parser.add_argument("--resume", default=None, help="Checkpoint path to resume from")
     args = parser.parse_args()
@@ -170,6 +171,11 @@ def main():
         cfg.device = args.device
     if args.out:
         cfg.checkpoint_dir = args.out
+    if args.backbone:
+        cfg.backbone_name = args.backbone
+        if not args.out and args.backbone != "s3net":
+            cfg.checkpoint_dir = f"checkpoints_{args.backbone}"
+            cfg.plot_dir = f"plots_{args.backbone}"
 
     device_str = cfg.device if (torch.cuda.is_available() and "cuda" in cfg.device) else "cpu"
     device = torch.device(device_str)
@@ -304,6 +310,7 @@ def main():
     total_iters = cfg.epochs * max(len(train_loader), 1)
     step = start_epoch * max(len(train_loader), 1)
     best_f1 = -1.0
+    epochs_without_improvement = 0
 
     print("\n" + "="*80)
     print(f"Starting Training for {cfg.epochs - start_epoch} epochs (Epoch {start_epoch+1} -> {cfg.epochs})")
@@ -411,6 +418,7 @@ def main():
             # Best checkpoint by F1
             if val_res.get("val_f1", 0.0) > best_f1:
                 best_f1 = val_res["val_f1"]
+                epochs_without_improvement = 0
                 best_path = os.path.join(cfg.checkpoint_dir, "s3det_best.pt")
                 torch.save({
                     "model":     model.state_dict(),
@@ -422,6 +430,8 @@ def main():
                     "nwd_C":     nwd_C,
                 }, best_path)
                 val_str += " ★[NEW BEST]"
+            else:
+                epochs_without_improvement += 1
         else:
             for k in all_val_keys:
                 history[k].append(None)
@@ -456,6 +466,10 @@ def main():
         curves_dir = os.path.join(cfg.plot_dir, "curves")
         plot_training_curves(history, curves_dir)
         plot_val_metrics_epoch(history, curves_dir)   # AP50:95, FPPI, size bins, center err
+
+        if epochs_without_improvement >= getattr(cfg, "early_stopping_patience", 15):
+            print(f"\n[Early Stopping] No improvement in F1 for {epochs_without_improvement} epochs. Stopping early at epoch {epoch_idx}.")
+            break
 
     print("\n" + "="*80)
     print(f"Training Complete! Checkpoints stored in '{cfg.checkpoint_dir}', all curves plotted in '{cfg.plot_dir}/curves'.")

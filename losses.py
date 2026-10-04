@@ -223,8 +223,24 @@ class S3DetLoss(nn.Module):
                 pos_points[:, 1] + pred_ltrb[:, 3],
             ], dim=-1)
 
-            ious = bbox_iou(pred_boxes.detach(), pos_gt_boxes).clamp(min=0)
-            qfl_target[pos_mask, pos_gt_labels] = ious
+            # QFL target = localization quality. Must match the bbox loss metric.
+            if self.loss_type == "nwd":
+                # Use NWD similarity — consistent with NWD bbox loss.
+                # Without this, tiny drones get IoU≈0.14 target → score<0.30 → filtered out.
+                pcx = (pred_boxes[:, 0] + pred_boxes[:, 2]).detach() / 2
+                pcy = (pred_boxes[:, 1] + pred_boxes[:, 3]).detach() / 2
+                pw  = (pred_boxes[:, 2] - pred_boxes[:, 0]).detach().clamp(min=1e-7)
+                ph  = (pred_boxes[:, 3] - pred_boxes[:, 1]).detach().clamp(min=1e-7)
+                tcx = (pos_gt_boxes[:, 0] + pos_gt_boxes[:, 2]) / 2
+                tcy = (pos_gt_boxes[:, 1] + pos_gt_boxes[:, 3]) / 2
+                tw  = (pos_gt_boxes[:, 2] - pos_gt_boxes[:, 0]).clamp(min=1e-7)
+                th  = (pos_gt_boxes[:, 3] - pos_gt_boxes[:, 1]).clamp(min=1e-7)
+                w2  = (pcx - tcx)**2 + (pcy - tcy)**2 + ((pw - tw)/2)**2 + ((ph - th)/2)**2
+                nwd_sim = torch.exp(-torch.sqrt(w2 + 1e-7) / self.nwd_constant)
+                qfl_target[pos_mask, pos_gt_labels] = nwd_sim
+            else:
+                ious = bbox_iou(pred_boxes.detach(), pos_gt_boxes).clamp(min=0)
+                qfl_target[pos_mask, pos_gt_labels] = ious
             total_qfl = total_qfl + self.qfl(cls_flat[b], qfl_target)
 
             target_ltrb = torch.stack([
@@ -249,7 +265,10 @@ class S3DetLoss(nn.Module):
 
             total_pos += int(pos_mask.sum().item())
 
-        total_pos = max(total_pos, 1)
+        # Floor at batch_size to prevent gradient explosions on negative-dominated batches.
+        # Without this, batches with mostly Panshull negatives have total_pos≈1,
+        # causing 500k+ background point losses to be divided by 1.
+        total_pos = max(total_pos, batch_size)
         loss_type = getattr(self.cfg, "loss_type", self.loss_type).lower()
         w_qfl   = self.loss_weights.get("qfl",   1.0)
         w_dfl   = self.loss_weights.get("dfl",   0.25)

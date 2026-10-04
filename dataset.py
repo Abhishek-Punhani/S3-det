@@ -34,20 +34,44 @@ IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 def _find_images_and_labels(class_dir):
     img_subdir = os.path.join(class_dir, "images")
     lbl_subdir = os.path.join(class_dir, "labels")
+    
     if os.path.isdir(img_subdir):
-        images = sorted(p for p in glob.glob(os.path.join(img_subdir, "*"))
-                         if p.lower().endswith(IMG_EXTS))
-        label_dir = lbl_subdir if os.path.isdir(lbl_subdir) else img_subdir
+        img_dir_to_scan = img_subdir
+        lbl_dir_to_scan = lbl_subdir if os.path.isdir(lbl_subdir) else img_subdir
     else:
-        images = sorted(p for p in glob.glob(os.path.join(class_dir, "*"))
-                         if p.lower().endswith(IMG_EXTS))
-        label_dir = class_dir
+        img_dir_to_scan = class_dir
+        lbl_dir_to_scan = class_dir
+
+    try:
+        img_files = os.listdir(img_dir_to_scan)
+    except FileNotFoundError:
+        return []
+
+    images = [f for f in img_files if f.lower().endswith(IMG_EXTS)]
+    
+    # Build a hash set of all .txt files to avoid 140,000 slow disk stat() calls
+    if img_dir_to_scan == lbl_dir_to_scan:
+        labels_set = {f for f in img_files if f.lower().endswith('.txt')}
+    else:
+        try:
+            labels_set = {f for f in os.listdir(lbl_dir_to_scan) if f.lower().endswith('.txt')}
+        except FileNotFoundError:
+            labels_set = set()
 
     pairs = []
-    for img_path in images:
-        stem = os.path.splitext(os.path.basename(img_path))[0]
-        label_path = os.path.join(label_dir, stem + ".txt")
-        pairs.append((img_path, label_path if os.path.isfile(label_path) else None))
+    for img_name in images:
+        stem = os.path.splitext(img_name)[0]
+        txt_name = stem + ".txt"
+        
+        img_path = os.path.join(img_dir_to_scan, img_name)
+        if txt_name in labels_set:
+            label_path = os.path.join(lbl_dir_to_scan, txt_name)
+        else:
+            label_path = None
+            
+        pairs.append((img_path, label_path))
+        
+    pairs.sort(key=lambda x: x[0])
     return pairs
 
 
@@ -83,8 +107,9 @@ def _augment(image, boxes, target_size):
     w, h = image.size
     boxes_arr = np.array(boxes, dtype=np.float32).reshape(-1, 4) if boxes else np.zeros((0, 4), dtype=np.float32)
 
-    # 1. Random scale  [0.5, 1.5]
-    scale_factor = random.uniform(0.5, 1.5)
+    # 1. Random scale  [0.8, 1.5] — floor at 0.8 to prevent tiny targets
+    #    from shrinking below stride-4 resolution (was 0.5, destroyed <8px drones)
+    scale_factor = random.uniform(0.8, 1.5)
     new_w = max(1, int(round(w * scale_factor)))
     new_h = max(1, int(round(h * scale_factor)))
     image = image.resize((new_w, new_h), Image.BILINEAR)
@@ -203,9 +228,17 @@ class YOLODroneDataset(Dataset):
         return boxes, labels
 
     def __getitem__(self, idx):
-        img_path, label_path, is_negative = self.samples[idx]
-        image = Image.open(img_path).convert("RGB")
-        orig_w, orig_h = image.size
+        import random
+        while True:
+            img_path, label_path, is_negative = self.samples[idx]
+            try:
+                image = Image.open(img_path).convert("RGB")
+                image.load()  # Force load to catch truncated/corrupted files
+                orig_w, orig_h = image.size
+                break
+            except Exception as e:
+                print(f"\n  [Warning] Skipping corrupted image: {img_path}")
+                idx = random.randint(0, len(self.samples) - 1)
 
         boxes, labels = self._load_labels(label_path, is_negative, orig_w, orig_h)
         # boxes are currently in original-image pixel coords (x1,y1,x2,y2)

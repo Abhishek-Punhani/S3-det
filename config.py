@@ -39,7 +39,8 @@ class S3DetConfig:
     input_size: int = 640
     num_classes: int = 1  # single class: "drone". no_drone folder = background negatives
 
-    # --- backbone (S3Net) ---
+    # --- backbone ---
+    backbone_name: str = "s3net"                            # "s3net" or timm name (e.g. "resnet18")
     stem_channels: int = 32
     stage_channels: Tuple[int, int, int] = (64, 128, 256)   # C2, C3, C4 widths [ASSUMED]
     stage_blocks: Tuple[int, int, int] = (2, 2, 2)          # SSB blocks per stage [ASSUMED]
@@ -49,7 +50,8 @@ class S3DetConfig:
     # --- neck (IRFA) ---
     neck_channels: int = 96      # [ASSUMED]
     strides: Tuple[int, int, int] = (4, 8, 16)   # P2, P3, P4 [ASSUMED - see README]
-    regress_ranges: Tuple[Tuple[float, float], ...] = ((0, 64), (64, 128), (128, 1e8))
+    # Overlapping ranges so multiple feature levels cooperate on tiny/medium objects
+    regress_ranges: Tuple[Tuple[float, float], ...] = ((0, 48), (32, 128), (96, 1e8))
     center_sampling_radius: float = 2.5
 
     # --- head (LCR-Head) ---
@@ -69,6 +71,7 @@ class S3DetConfig:
     weight_decay: float = 0.05
     epochs: int = 100
     batch_size: int = 16
+    early_stopping_patience: int = 15   # stop training if no improvement for N epochs
     warmup_iters: int = 500
     min_lr: float = 5e-5
     save_every_epoch: bool = True
@@ -80,7 +83,7 @@ class S3DetConfig:
     # --- EMA (Exponential Moving Average of weights) ---
     # Stabilizes training; validation is run on EMA weights for better final metrics.
     ema: bool = True
-    ema_decay: float = 0.9998       # typical for object detection (0.999x range)
+    ema_decay: float = 0.9999       # stronger smoothing: 0.9999^7500 ≈ 0.47 retention/epoch
     ema_warmup_iters: int = 100     # steps before EMA kicks in (let model warm up first)
 
     # --- AMP (Automatic Mixed Precision) ---

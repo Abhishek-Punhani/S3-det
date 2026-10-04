@@ -13,8 +13,16 @@ class S3Det(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.backbone = S3Net(cfg)
-        self.neck = IRFA(cfg.stage_channels, cfg.neck_channels, cfg)
+        
+        if cfg.backbone_name.lower() == "s3net":
+            self.backbone = S3Net(cfg)
+        else:
+            from backbone import TimmBackbone
+            self.backbone = TimmBackbone(cfg.backbone_name, pretrained=True)
+            # Dynamically override the stage channels so the IRFA neck correctly adapts to the new backbone's widths
+            self.cfg.stage_channels = tuple(self.backbone.channels)
+
+        self.neck = IRFA(self.cfg.stage_channels, cfg.neck_channels, cfg)
         self.head = LCRHead(cfg.neck_channels, cfg.num_classes, cfg.reg_max,
                              cfg.stacked_convs, num_levels=len(cfg.strides))
         self.loss_fn = S3DetLoss(cfg)
