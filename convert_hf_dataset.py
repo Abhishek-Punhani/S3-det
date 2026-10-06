@@ -384,7 +384,8 @@ def add_hf_bird_species(output_dir, max_samples=None, train_ratio=0.90):
 
     print("\n  Streaming HF bird-species-dataset...")
     try:
-        ds = load_dataset("chriamue/bird-species-dataset", split="train", streaming=True)
+        # pass trust_remote_code=True because HF deprecated automatic script execution
+        ds = load_dataset("chriamue/bird-species-dataset", split="train", streaming=True, trust_remote_code=True)
     except Exception as e:
         print(f"  [Warning] Failed to load chriamue/bird-species-dataset: {e}")
         return
@@ -566,10 +567,26 @@ def add_roboflow_datasets(api_key, output_dir, tmp_dir="tmp_roboflow"):
     total_pos = total_neg = 0
     for item in ROBOFLOW_PROJECTS:
         ws, proj, ver, desc = item["workspace"], item["project"], item["version"], item["desc"]
-        print(f"\n  --> {desc}  ({ws}/{proj} v{ver})")
+        print(f"\n  --> {desc}  ({ws}/{proj})")
         try:
             dest = os.path.join(tmp_dir, f"{ws}_{proj}")
-            rf.workspace(ws).project(proj).version(ver).download("yolov8", location=dest)
+            project_obj = rf.workspace(ws).project(proj)
+            
+            # Try to get the available versions dynamically to avoid "Version not found" errors
+            available_versions = []
+            try:
+                available_versions = project_obj.versions()
+            except Exception:
+                pass
+            
+            target_version = ver
+            if available_versions:
+                # Pick the latest version available in the project
+                target_version = available_versions[-1].version
+                
+            print(f"      Downloading version {target_version}...")
+            project_obj.version(target_version).download("yolov8", location=dest)
+            
             prefix = f"{ws[:6]}_{proj[:8]}".replace("-", "").replace("_", "")[:12]
             pos, neg = _ingest_roboflow_folder(dest, output_dir, prefix=prefix)
             total_pos += pos
@@ -650,7 +667,7 @@ def main():
         print("\n" + "="*58)
         print("  STEP 1/3 - HuggingFace: pathikg/drone-detection-dataset")
         print("="*58)
-        hf = load_dataset("pathikg/drone-detection-dataset", streaming=True)
+        hf = load_dataset("pathikg/drone-detection-dataset", streaming=True, trust_remote_code=True)
         if "train" in hf:
             print("\n  Processing HF train split...")
             convert_hf_split(hf["train"], "train", args.output_dir, args.max_hf_train)
